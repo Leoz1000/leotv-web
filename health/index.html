@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0b0d">
+<title>Stato di LeoTv</title>
+<!-- Published by scripts/pages-extra.sh at /leotv-web/health/. https://leotv-cloud.leonardoleonardi2602.workers.dev
+     is replaced with the LeoTv cloud address at publish time. The page asks
+     the cloud which LeoTv is the main one, then that server's /api/health,
+     every 15 seconds. It shows only what /api/health tells anyone. -->
+<style>
+  :root {
+    --bg: #0b0b0d; --card: #1c1c1e; --line: rgba(255, 255, 255, 0.08);
+    --text: #f5f5f7; --text-2: rgba(235, 235, 245, 0.62); --ok: #30d158; --bad: #ff453a; --wait: #ffd60a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
+    padding: max(48px, env(safe-area-inset-top)) 16px max(32px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 520px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 34px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+  .sub { margin: 0 0 28px; color: var(--text-2); font-size: 15px; }
+  .status { display: flex; align-items: center; gap: 14px; padding: 18px 20px; border-radius: 22px; background: var(--card); margin-bottom: 20px; }
+  .dot { flex: none; width: 14px; height: 14px; border-radius: 50%; background: var(--wait); box-shadow: 0 0 0 5px rgba(255, 214, 10, 0.16); }
+  .status.ok .dot { background: var(--ok); box-shadow: 0 0 0 5px rgba(48, 209, 88, 0.16); }
+  .status.bad .dot { background: var(--bad); box-shadow: 0 0 0 5px rgba(255, 69, 58, 0.16); }
+  .status b { display: block; font-size: 20px; font-weight: 700; }
+  .status span { color: var(--text-2); font-size: 15px; }
+  dl { margin: 0; border-radius: 22px; background: var(--card); overflow: hidden; }
+  dl div { display: flex; justify-content: space-between; gap: 16px; padding: 14px 20px; border-top: 1px solid var(--line); }
+  dl div:first-child { border-top: 0; }
+  dt { color: var(--text-2); }
+  dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .foot { margin: 20px 4px 0; color: var(--text-2); font-size: 13px; text-align: center; }
+  button {
+    display: block; margin: 20px auto 0; height: 44px; padding: 0 22px; border: 0; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12); color: var(--text); font: 600 16px system-ui, sans-serif;
+    touch-action: manipulation; transition: transform 0.1s ease-out;
+  }
+  button:active { transform: scale(0.97); }
+  @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Stato di LeoTv</h1>
+  <p class="sub">Il server principale, controllato ogni 15 secondi.</p>
+  <div class="status" id="status" role="status" aria-live="polite">
+    <i class="dot" aria-hidden="true"></i>
+    <div><b id="headline">Controllo…</b><span id="detail">Chiedo al cloud dov'è LeoTv</span></div>
+  </div>
+  <dl>
+    <div><dt>Server</dt><dd id="name">—</dd></div>
+    <div><dt>Risposta in</dt><dd id="latency">—</dd></div>
+    <div><dt>Account</dt><dd id="accounts">—</dd></div>
+    <div><dt>Interfaccia</dt><dd id="web">—</dd></div>
+    <div><dt>App Android TV</dt><dd id="apk">—</dd></div>
+    <div><dt>Ultimo controllo</dt><dd id="when">—</dd></div>
+  </dl>
+  <button type="button" id="again">Controlla adesso</button>
+  <p class="foot">Senza codice d'accesso il server mostra solo se è attivo.</p>
+</main>
+<script>
+(function () {
+  var CLOUD = 'https://leotv-cloud.leonardoleonardi2602.workers.dev';
+  var $ = function (id) { return document.getElementById(id); };
+  var busy = false;
+
+  function timed(url, ms) {
+    var ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var t = setTimeout(function () { if (ctl) ctl.abort(); }, ms);
+    var start = performance.now();
+    return fetch(url, { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+      .then(function (r) { clearTimeout(t); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (body) { return { body: body, ms: Math.round(performance.now() - start) }; });
+  }
+
+  function show(kind, headline, detail) {
+    $('status').className = 'status ' + kind;
+    $('headline').textContent = headline;
+    $('detail').textContent = detail;
+  }
+
+  function buildDate(stamp) {
+    var m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(stamp || '');
+    return m ? m[3] + '/' + m[2] + '/' + m[1] + ' ' + m[4] + ':' + m[5] : (stamp || '—');
+  }
+
+  function check() {
+    if (busy) return;
+    busy = true;
+    $('when').textContent = new Date().toLocaleTimeString('it-IT');
+    timed(CLOUD + '/v1/main', 6000)
+      .then(function (r) {
+        var url = String((r.body && r.body.url) || '').replace(/\/+$/, '');
+        if (!/^https:\/\//.test(url)) throw { cloud: true, none: true };
+        return timed(url + '/api/health', 8000).then(function (h) { return { url: url, h: h }; });
+      })
+      .then(function (r) {
+        var b = r.h.body || {};
+        if (!b.ok || b.app !== 'leotv') throw new Error('risposta inattesa');
+        var slow = r.h.ms > 1500;
+        show(slow ? 'wait' : 'ok', slow ? 'Attivo, ma lento' : 'Attivo', 'LeoTv risponde normalmente');
+        $('name').textContent = b.name || r.url.replace(/^https:\/\//, '');
+        $('latency').textContent = r.h.ms + ' ms';
+        $('accounts').textContent = b.accounts ? 'Attivi' : 'Non attivi';
+        $('web').textContent = buildDate(b.web);
+      })
+      .catch(function (e) {
+        if (e && e.cloud) show('bad', 'Nessun server principale', 'Nel cloud non è scelto un LeoTv principale');
+        else show('bad', 'Non risponde', 'Il server non risponde: il Mac potrebbe essere spento o senza rete');
+        $('latency').textContent = '—';
+      })
+      .then(function () { busy = false; });
+  }
+
+  timed('../apk-version.json', 6000)
+    .then(function (r) { $('apk').textContent = r.body.versionName || '—'; })
+    .catch(function () { $('apk').textContent = '—'; });
+
+  $('again').addEventListener('click', check);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) check(); });
+  check();
+  setInterval(function () { if (!document.hidden) check(); }, 15000);
+})();
+</script>
+</body>
+</html>
